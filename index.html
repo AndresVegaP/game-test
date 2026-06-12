@@ -169,6 +169,8 @@ fit();
 //   ^ pinchos        e enemigo               P inicio
 //   F bandera meta
 // ------------------------------------------------------------
+// Geometría verificada contra la física del salto (subidas <=2 tiles,
+// huecos <=3 tiles, bandera a nivel del suelo) por tools/validate-levels.js
 const LEVELS = [
 {
   name: 'Nivel 1 · El Bosque Brillante',
@@ -177,17 +179,17 @@ const LEVELS = [
 '                                                            ',
 '                                                            ',
 '                                                            ',
-'              *                                             ',
-'            =====        *  *                               ',
-'                       ======          *                    ',
-'   *                              ========                  ',
-'  ===       *                                 *        F    ',
-'           ===     e                  *      ===      ===   ',
-'    P                          *    =====                   ',
-'  =====        ===========   ===                    e       ',
 '                                                            ',
-'######    ##############################   ################',
-'######    ##############################   ################',
+'                                                            ',
+'                 *                                          ',
+'               =====                                        ',
+'          *             *                                   ',
+'        =====         =====                                 ',
+'   P                                                 *      ',
+' =====                                              =====   ',
+'        e               e                   e             F ',
+'#############   #################   ########################',
+'#############   #################   ########################',
   ]
 },
 {
@@ -196,18 +198,18 @@ const LEVELS = [
   map: [
 '                                                                      ',
 '                                                                      ',
-'        *                  *                                          ',
-'      =====              =====        *   *                           ',
-'                 *                  =======                           ',
-'   P           =====                            =====                 ',
-'  ====                    e                *            *             ',
-'           =======    =========           ===   e     ====     F      ',
-'    *                                                          ===    ',
-'   ===          *                  =====     ========                 ',
-'              =====    *                                  *           ',
-'                      ====   ^^                         ====    e     ',
-'#########   ###############################   #######################',
-'#########   ###############################   #######################',
+'                                                                      ',
+'                                                                      ',
+'                                                                      ',
+'                               *                                      ',
+'                              ====                                    ',
+'                         *            *                               ',
+'                        ====         ====                             ',
+'   P              *                        *                  *       ',
+'  ====          =====                    =====               ====     ',
+'      e         ^^^  e             e     ^^^                e      F  ',
+'#########   ###################   ######################   ###########',
+'#########   ###################   ######################   ###########',
   ]
 },
 {
@@ -215,19 +217,19 @@ const LEVELS = [
   sky: ['#41295a', '#2F0743'],
   map: [
 '                                                                                ',
-'                                                  *                             ',
-'            *                *                  =====                           ',
-'          =====            =====                          *   *                 ',
-'                    *               e                   =======                 ',
-'   P              =====        ==========                            *      F   ',
-'  ====    e                                     *                  =====   ==== ',
-'        ======            *                    ===          e                   ',
-'                 *      =====                          ==========               ',
-'    *           ===                =====    *                            *      ',
-'  =====                  e                 ===       *            ^^   =====    ',
-'                     =========                      ====   ^^^                  ',
-'########   ####################   #########################################    ',
-'########   ####################   #########################################    ',
+'                                                                                ',
+'                                                                                ',
+'                     *                                                          ',
+'                    ====                                                        ',
+'               *            *                                                   ',
+'              ====         ====                                                 ',
+'         *                        *                       *                     ',
+'        ====                     ====                   ====                    ',
+'   P                                  *              *                          ',
+' =====                              =====            ====                       ',
+'      e        ^^   e           e   ^^^     e        e   ^^             e   F   ',
+'########   ###############   ###################   ################   ##########',
+'########   ###############   ###################   ################   ##########',
   ]
 }
 ];
@@ -279,7 +281,7 @@ function loadLevel(i) {
 }
 
 function makePlayer(x, y) {
-  return { x, y, w: 24, h: 34, vx: 0, vy: 0, onGround: false, face: 1, anim: 0, inv: 0 };
+  return { x, y, w: 24, h: 34, vx: 0, vy: 0, onGround: false, face: 1, anim: 0, inv: 0, coyote: 0 };
 }
 function makeEnemy(x, y) {
   return { x, y, w: 30, h: 26, dir: 1, speed: 1.1, ph: Math.random() * 6 };
@@ -325,7 +327,8 @@ function startGame() {
 // ------------------------------------------------------------
 // Física y colisiones
 // ------------------------------------------------------------
-const GRAV = 0.55, MOVE = 0.6, MAXVX = 4.4, JUMP = -12.2, FRIC = 0.82;
+const GRAV = 0.55, MOVE = 0.6, MAXVX = 4.4, JUMP = -13, FRIC = 0.82;
+const COYOTE = 8; // frames de gracia para saltar tras dejar una plataforma
 
 function solidAt(px, py) {
   const c = Math.floor(px / TILE), r = Math.floor(py / TILE);
@@ -350,10 +353,12 @@ function updatePlayer() {
   p.vx = Math.max(-MAXVX, Math.min(MAXVX, p.vx));
 
   // Salto (con corte al soltar para control fino)
+  if (p.onGround) p.coyote = COYOTE; else if (p.coyote > 0) p.coyote--;
   if (inputJump()) {
-    if (p.onGround && !jumpHeld) {
+    if ((p.onGround || p.coyote > 0) && !jumpHeld) {
       p.vy = JUMP;
       p.onGround = false;
+      p.coyote = 0;
       spawnDust(p.x + p.w / 2, p.y + p.h, 6);
     }
     jumpHeld = true;
@@ -473,7 +478,8 @@ function updateEnemies() {
     const ahead = e.x + (e.dir > 0 ? e.w + 2 : -2);
     const wallHit = solidAt(ahead, e.y + e.h / 2);
     const floorAhead = solidAt(ahead, e.y + e.h + 6);
-    if (wallHit || !floorAhead) e.dir *= -1;
+    const spikeAhead = spikeAt(ahead, e.y + e.h / 2);
+    if (wallHit || !floorAhead || spikeAhead) e.dir *= -1;
   }
 }
 
